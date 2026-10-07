@@ -2,7 +2,9 @@ import base64, hashlib, io, json, os, re, sqlite3, uuid, zipfile
 from pathlib import Path
 from datetime import datetime, timezone
 
-QUESTIONS = ['What problem did you solve?', 'What did you personally do?', 'What changed as a result?', 'Which metrics can you substantiate?', 'Which tools and collaborators were involved?', 'When and for which employer?', 'Which statement may be used in your resume?']
+SECTIONS = ['Experience','Education','Awards & Honors','Military Service','Volunteering','Skills','Languages']
+
+QUESTIONS = ['Have you received any awards or honors? Include the award name, awarding organization, date, and what it recognized; skip this if none.', 'What problem did you solve?', 'What did you personally do?', 'What changed as a result?', 'Which metrics can you substantiate?', 'Which tools and collaborators were involved?', 'When and for which employer?', 'Which statement may be used in your resume?']
 
 def root():
     p = Path(os.environ.get('CAREER_DATA_DIR', Path.home() / '.local/share/career-assistant')).expanduser()
@@ -29,7 +31,7 @@ class Memory:
         allowed = {'id','text','section','employer','role','dates','location','source','approved'}
         if set(fact)-allowed: raise ValueError('Unsupported fact field')
         if not isinstance(fact.get('text'),str) or not 1 <= len(fact['text']) <= 4000: raise ValueError('Fact text required, maximum 4000 characters')
-        if fact.get('section','Experience') not in ['Experience','Education','Military Service','Volunteering','Skills','Languages']: raise ValueError('Invalid section')
+        if fact.get('section','Experience') not in SECTIONS: raise ValueError('Invalid section')
         if not isinstance(fact.get('approved',False), bool): raise ValueError('Approval must be boolean')
         for k,v in fact.items():
             if k != 'approved' and (not isinstance(v,str) or len(v)>4000): raise ValueError('Invalid field')

@@ -1,0 +1,27 @@
+{
+  "manifest_version": "0.4",
+  "name": "career-memory-assistant",
+  "display_name": "Career Memory Assistant",
+  "version": "0.2.0",
+  "description": "Build a private career bank and evidence-based resumes entirely in chat.",
+  "long_description": "Ask about accomplishments, awards and honors; save only consented facts; discover jobs and export approved PDF and Word resumes. Data stays on your computer, but facts used in chat are sent to your chosen chat provider. LinkedIn is optional and read-only, with your own authentication.",
+  "author": {"name": "Career Memory Assistant contributors"},
+  "license": "MIT",
+  "server": {
+    "type": "uv",
+    "entry_point": "server/claude_entry.py",
+    "mcp_config": {
+      "command": "uv",
+      "args": ["run", "--directory", "${__dirname}", "server/claude_entry.py"],
+      "env": {"CAREER_DATA_DIR": "${user_config.data_directory}", "CAREER_USER": "local", "CAREER_LINKEDIN_COMMAND": "${user_config.linkedin_command}"}
+    }
+  },
+  "user_config": {
+    "data_directory": {"type": "directory", "title": "Private career data folder", "description": "Keep this folder private. It survives extension updates.", "default": "${HOME}/.local/share/career-assistant", "required": true},
+    "linkedin_command": {"type": "string", "title": "Optional LinkedIn server command", "description": "JSON command array for your own trusted LinkedIn MCP server. Leave empty to disable LinkedIn.", "default": "", "required": false}
+  },
+  "compatibility": {"platforms": ["darwin"], "runtimes": {"python": ">=3.11"}},
+  "tools_generated": true,
+  "prompts_generated": true,
+  "keywords": ["resume", "career", "awards", "jobs"]
+}

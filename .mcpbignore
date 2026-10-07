@@ -1,0 +1,11 @@
+.git/
+.venv/
+work/
+outputs/
+tests/
+__pycache__/
+*.pyc
+*.egg-info/
+.env
+*.sqlite*
+*.db

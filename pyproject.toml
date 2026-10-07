@@ -3,13 +3,15 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 [project]
 name = "career-memory-assistant"
-version = "0.1.0"
+version = "0.2.0"
 description = "Private evidence-based career memory and job preparation"
 requires-python = ">=3.11"
-dependencies = ["python-docx>=1.1,<2", "reportlab>=4,<5", "pypdf>=5,<7", "mcp>=1.12,<2"]
+dependencies = ["python-docx>=1.1,<2", "reportlab>=4,<5", "pypdf>=5,<7", "mcp>=1.30,<2", "uvicorn>=0.31,<1"]
 [project.scripts]
 career-assistant = "career_assistant.web:main"
 career-assistant-mcp = "career_assistant.mcp_server:main"
+career-assistant-connect = "career_assistant.http_server:main"
+career-assistant-setup = "career_assistant.install:main"
 [tool.setuptools.package-data]
 career_assistant = ["*.html", "*.js", "*.css"]
 

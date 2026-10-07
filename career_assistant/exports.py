@@ -1,7 +1,7 @@
 import re, unicodedata, json
 from pathlib import Path
 from html import escape
-from .core import tailored, user_dir
+from .core import tailored, user_dir, SECTIONS
 
 def slug(s, fallback):
     s=unicodedata.normalize('NFKD',str(s)).encode('ascii','ignore').decode().lower()
@@ -49,7 +49,7 @@ def export(user, profile, title, company, job, identity_approved=False, output=N
     r=p_name.add_run(display); r.bold=True; r.font.name='Times New Roman'; r.font.size=Pt(14)
     for key in ['headline','contact']:
         if profile.get(key): p1=d.add_paragraph(profile[key]); p1.alignment=WD_ALIGN_PARAGRAPH.CENTER
-    for section in ['Experience','Education','Military Service','Volunteering','Skills','Languages']:
+    for section in SECTIONS:
         fs=[f for f in plan['facts'] if f.get('section','Experience')==section]
         if not fs: continue
         story.append(KeepTogether([Paragraph(section,heading),HRFlowable(width='100%',thickness=.5)]))

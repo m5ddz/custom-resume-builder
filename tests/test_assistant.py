@@ -2,7 +2,7 @@ import unittest, tempfile, os, io, json, base64, zipfile, threading, http.client
 from pathlib import Path
 from unittest.mock import patch
 from datetime import datetime, timezone, timedelta
-from career_assistant.core import Memory, extract, tailored, user_dir
+from career_assistant.core import Memory, extract, tailored, user_dir, QUESTIONS
 from career_assistant.sources import strict, public_fetch, research, employer_jobs, jsonld_jobs, LinkedIn, observe
 from career_assistant.exports import filename, export
 from career_assistant.service import dispatch
@@ -94,6 +94,25 @@ class Tests(unittest.TestCase):
         from pypdf import PdfReader
         from docx import Document
         p=Path(result['directory']);self.assertIn('Led product launch workshops',PdfReader(p/result['pdf']).pages[0].extract_text());self.assertIn('Led product launch workshops',' '.join(x.text for x in Document(p/result['docx']).paragraphs))
+    def test_optional_awards_and_honors(self):
+        self.assertIn('awards or honors', QUESTIONS[0])
+        Memory('alice').put(self.fact(),True)
+        profile={'first_name':'Taylor','last_name':'Example'}
+        from pypdf import PdfReader
+        from docx import Document
+        def texts(result):
+            p=Path(result['directory'])
+            return (' '.join(page.extract_text() for page in PdfReader(p/result['pdf']).pages),
+                    ' '.join(para.text for para in Document(p/result['docx']).paragraphs))
+        for text in texts(export('alice',profile,'Role','Company','award',True)):
+            self.assertNotIn('Awards & Honors',text)
+        Memory('alice').put({'text':'Received the fictional Community Leadership Award.', 'section':'Awards & Honors', 'employer':'Example Association','role':'Leadership Award','dates':'2025','approved':True},True)
+        Memory('alice').put({'text':'Unapproved fictional award', 'section':'Awards & Honors','approved':False},True)
+        for text in texts(export('alice',profile,'Role','Company','award',True)):
+            self.assertIn('Awards & Honors',text)
+            self.assertIn('Received the fictional Community Leadership Award.',text)
+            self.assertNotIn('Unapproved fictional award',text)
+
     def test_long_resume_paginates_without_losing_statements(self):
         for i in range(30):
             Memory('alice').put({'text':f'Synthetic accomplishment {i:02d}. '+('Delivered fictional customer research workshops with the product team. '*10),'approved':True,'employer':'Example Company','role':'Product Manager'},True)
