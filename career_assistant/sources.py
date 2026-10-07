@@ -1,6 +1,6 @@
 """Bounded public HTTPS fetches with pinned DNS and no redirects or proxies."""
 import http.client, socket, ssl, ipaddress, json, re, asyncio, os
-from urllib.parse import urlsplit, quote
+from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 from datetime import datetime, timezone, timedelta
 
 MAX_RESPONSE=2*1024*1024
@@ -28,20 +28,39 @@ def instant(value):
     if d.tzinfo is None: raise ValueError('Timestamp needs timezone')
     return d.astimezone(timezone.utc)
 
+def job_key(url):
+    """Drop tracking fields, preserving query parameters that identify a listing."""
+    u=urlsplit(url)
+    tracking={'trk','tracking','trackingid','ref','refid','source'}
+    query=sorted((k,v) for k,v in parse_qsl(u.query,keep_blank_values=True) if not k.lower().startswith('utm_') and k.lower() not in tracking)
+    return urlunsplit((u.scheme.lower(),u.netloc.lower(),u.path.rstrip('/'),urlencode(query),''))
+
 def strict(jobs, now=None):
-    now=now or datetime.now(timezone.utc); seen=set(); good=[]; rejected=[]
-    for j in jobs:
-        key=j.get('url','').split('?')[0].rstrip('/')
+    now=now or datetime.now(timezone.utc)
+    groups={}; good=[]; rejected=[]
+    for j in jobs: groups.setdefault(job_key(j.get('url','')),[]).append(j)
+    def checked(j):
+        try:return instant(j.get('checked_at'))
+        except ValueError:return datetime.min.replace(tzinfo=timezone.utc)
+    for key, duplicates in groups.items():
+        dated=[]
+        for j in duplicates:
+            try:
+                if j.get('date_kind')=='published' and j.get('publication_evidence'): dated.append((instant(j['published_at']),j))
+            except (KeyError,ValueError,TypeError): pass
+        # Preserve the earliest evidenced publication, then use the newest active check.
+        if dated:
+            earliest=min(d for d,j in dated)
+            j=max((j for d,j in dated if d==earliest),key=checked)
+        else: j=max(duplicates,key=checked)
         reason=None
         try:
-            pub=instant(j['published_at']); checked=instant(j['checked_at'])
+            pub=instant(j['published_at']); check=instant(j['checked_at'])
             if not now-timedelta(days=14)<=pub<=now: reason='outside 14-day publication window'
             elif not j.get('publication_evidence') or j.get('date_kind')!='published': reason='publication not evidenced'
-            elif j.get('active') is not True or not now-timedelta(minutes=15)<=checked<=now: reason='active listing not freshly verified'
+            elif j.get('active') is not True or not now-timedelta(minutes=15)<=check<=now: reason='active listing not freshly verified'
         except (KeyError,ValueError,TypeError): reason='unknown publication or verification date'
         if not key: reason='missing source URL'
-        if key in seen: continue
-        seen.add(key)
         (rejected if reason else good).append(dict(j,**({'exclusion_reason':reason} if reason else {})))
     return {'strict_results':good,'excluded':rejected,'window_days':14}
 
@@ -52,10 +71,10 @@ def jsonld_jobs(url):
             for x in v: walk(x)
         elif isinstance(v,dict):
             if v.get('@type')=='JobPosting':
-                expiry=v.get('validThrough'); active=False
-                try: active=bool(expiry and instant(expiry)>now)
+                expiry=v.get('validThrough'); active=None
+                try: active=instant(expiry)>now if expiry else None
                 except ValueError: pass
-                result.append({'title':v.get('title',''),'company':v.get('hiringOrganization',{}).get('name',''),'url':url,'description':v.get('description',''),'published_at':v.get('datePosted'),'date_kind':'published','publication_evidence':{'url':url,'field':'JobPosting.datePosted','value':v.get('datePosted')},'active':active,'checked_at':now.isoformat(),'updated_at':v.get('dateModified'),'reposted_at':None,'first_discovered_at':now.isoformat()})
+                result.append({'title':v.get('title',''),'company':v.get('hiringOrganization',{}).get('name',''),'url':url,'description':v.get('description',''),'published_at':v.get('datePosted'),'date_kind':'published' if v.get('datePosted') else ('updated' if v.get('dateModified') else 'unknown'),'publication_evidence':{'url':url,'field':'JobPosting.datePosted','value':v.get('datePosted')} if v.get('datePosted') else None,'active':active,'checked_at':now.isoformat(),'updated_at':v.get('dateModified'),'reposted_at':None,'first_discovered_at':now.isoformat()})
             if '@graph' in v: walk(v['@graph'])
     for block in re.findall(r'<script[^>]*type=[\"\']application/ld\+json[\"\'][^>]*>(.*?)</script>',body,re.S|re.I):
         try: walk(json.loads(block))
@@ -73,13 +92,27 @@ def employer_jobs(provider, board):
         return [dict(title=j['text'],company=board,url=j['hostedUrl'],description=j.get('descriptionPlain',''),published_at=None,date_kind='unknown',publication_evidence=None,active=True,checked_at=now,first_discovered_at=now,reposted_at=None) for j in data[:100]]
     raise ValueError('Choose greenhouse or lever')
 
+class LinkedInError(ValueError):
+    """Safe actionable integration failure; never includes third-party payloads."""
+
+def linkedin_failure(error):
+    leaves=[]
+    def visit(e):
+        if isinstance(e,BaseExceptionGroup):
+            for sub in e.exceptions: visit(sub)
+        else: leaves.append(e)
+    visit(error)
+    return next((e for e in leaves if isinstance(e,LinkedInError)),LinkedInError('LinkedIn MCP connection failed. Check the configured local command and environment.'))
+
 class LinkedIn:
     ALLOWED={'search_jobs','get_job_details','get_company_profile','get_company_employees','search_people'}
 
     async def call(self, tool, arguments):
         if tool not in self.ALLOWED: raise ValueError('Read-only tool not allowed')
-        async with self.session() as session:
-            return await self.invoke(session,tool,arguments)
+        try:
+            async with self.session() as session:
+                return await self.invoke(session,tool,arguments)
+        except ExceptionGroup as e: raise linkedin_failure(e) from None
 
     from contextlib import asynccontextmanager
     @asynccontextmanager
@@ -88,9 +121,11 @@ class LinkedIn:
         from mcp.client.stdio import stdio_client
         config=json.loads(os.environ.get('CAREER_LINKEDIN_COMMAND','null'))
         if not isinstance(config,list) or not config or not all(isinstance(x,str) for x in config): raise ValueError('Set CAREER_LINKEDIN_COMMAND to your own MCP command JSON array')
+        env=json.loads(os.environ.get('CAREER_LINKEDIN_ENV','{}'))
+        if not isinstance(env,dict) or not all(isinstance(k,str) and isinstance(v,str) for k,v in env.items()): raise ValueError('CAREER_LINKEDIN_ENV must be an environment object')
         # Config is operator controlled, never accepted from HTTP or MCP arguments.
         with open(os.devnull,'w') as errlog:
-            async with stdio_client(StdioServerParameters(command=config[0],args=config[1:]),errlog=errlog) as (r,w):
+            async with stdio_client(StdioServerParameters(command=config[0],args=config[1:],env=env),errlog=errlog) as (r,w):
                 async with ClientSession(r,w) as session:
                     await session.initialize()
                     yield session
@@ -100,10 +135,22 @@ class LinkedIn:
         available=await session.list_tools()
         if tool not in {t.name for t in available.tools}: raise ValueError('Required LinkedIn tool unavailable')
         result=await session.call_tool(tool,arguments)
-        if result.isError: raise ValueError('LinkedIn tool failed; authentication may need user action')
+        if result.isError:
+            text=' '.join(getattr(c,'text','') for c in result.content).lower()
+            if 'another linkedin mcp client' in text or 'browser is busy' in text:
+                raise LinkedInError('LinkedIn browser is busy in another MCP client. Finish that read, then retry; the saved session was not changed.')
+            if any(k in text for k in ['captcha','two-factor','2fa']):
+                raise LinkedInError('LinkedIn requires a user-owned captcha or two-factor step. Complete it in the official login window before retrying.')
+            if any(k in text for k in ['login required','log in','sign in','authentication required']):
+                raise LinkedInError('LinkedIn login is required. Sign in through the official server login window, then retry.')
+            raise LinkedInError('LinkedIn read failed. Check the official server status; no session details are logged.')
         return result.model_dump(mode='json')
 
 async def linkedin_jobs(keywords, location=''):
+    try: return await _linkedin_jobs(keywords,location)
+    except ExceptionGroup as e: raise linkedin_failure(e) from None
+
+async def _linkedin_jobs(keywords, location=''):
     client=LinkedIn()
     async with client.session() as session:
         found=await client.invoke(session,'search_jobs',{'keywords':keywords,'location':location,'date_posted':'past_month','max_pages':1,'sort_by':'date'})
@@ -143,20 +190,26 @@ def observe(user, jobs):
     db=sqlite3.connect(path); path.chmod(0o600)
     db.execute('CREATE TABLE IF NOT EXISTS jobs (url TEXT PRIMARY KEY, first_seen TEXT, published TEXT)')
     for j in jobs:
-        url=j.get('url','').split('?')[0].rstrip('/')
+        url=job_key(j.get('url',''))
         row=db.execute('SELECT first_seen,published FROM jobs WHERE url=?',(url,)).fetchone()
         first=row[0] if row else datetime.now(timezone.utc).isoformat()
         published=j.get('published_at')
         if row and row[1]:
             try:
-                if published and instant(published)>instant(row[1]): j['reposted_at']=published
-            except ValueError: pass
-            published=row[1]
+                if published and instant(published)>instant(row[1]):
+                    j['reposted_at']=published
+                    published=row[1]
+                elif not published: published=row[1]
+            except ValueError: published=row[1]
         j['first_discovered_at']=first
         # A changed date does not become a new original publication.
         if published != j.get('published_at'):
             j['published_at']=published
             j['publication_evidence']=None
-        db.execute('INSERT OR REPLACE INTO jobs VALUES (?,?,?)',(url,first,published if j.get('date_kind')=='published' else (row[1] if row else None)))
+        try:
+            instant(published)
+            stored=published if j.get('date_kind')=='published' and j.get('publication_evidence') else (row[1] if row else None)
+        except ValueError: stored=row[1] if row else None
+        db.execute('INSERT OR REPLACE INTO jobs VALUES (?,?,?)',(url,first,stored))
     db.commit();db.close()
     return jobs

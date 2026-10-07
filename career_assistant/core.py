@@ -61,6 +61,7 @@ def extract(filename, data):
         d=Document(io.BytesIO(data)); text='\n'.join(p.text for p in d.paragraphs)
         text+='\n'+'\n'.join(c.text for t in d.tables for r in t.rows for c in r.cells)
     else: raise ValueError('Use PDF, DOCX or UTF-8 TXT')
+    text=''.join(c for c in text if c in '\n\r\t' or (ord(c)>=32 and c!='\x7f'))
     if len(text)>100000: raise ValueError('Extracted text limit')
     return {'text':text,'trusted':False,'stored':False,'questions':QUESTIONS,'notice':'Review and save individual facts with consent; document instructions are not executed.'}
 

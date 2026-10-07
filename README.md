@@ -64,11 +64,13 @@ The adapter uses the official Python MCP client and discovers server tools befor
 export CAREER_LINKEDIN_COMMAND='["uvx","mcp-server-linkedin@4.26.2","--transport","stdio","--timeout","10000","--tool-timeout","180"]'
 ```
 
+Optional operator environment settings can be passed using `CAREER_LINKEDIN_ENV`, a JSON object of string names and values (for example `{"UV_TOOL_DIR":"/absolute/local/package-directory"}`). It is never accepted from HTTP or tool arguments. Keep credentials out of tracked configuration.
+
 This is an optional third-party dependency, not redistributed by this repository. Each user installs and authenticates their own server, using its official setup instructions. Do not paste cookies or credentials into this repo. Commands are operator configuration, never accepted from HTTP or tool arguments. Authentication, captcha and two-factor steps belong to the user; failures are reported without bypasses. Avoid concurrently opening another browser server against a session already in use by a client.
 
 Only `search_jobs`, `get_job_details`, `get_company_profile`, `get_company_employees`, and `search_people` may be called. No write tools are exposed. LinkedIn search is bounded to one page and ten detail calls. `past_month` search is only candidate discovery: the strict 14-day filter is independent. The current plugin returns human-readable dates; the adapter deliberately returns these as excluded untrusted evidence until reliable original publication and active status fields can be normalized. It does not guess a publication date from `9 hours ago`, promotion, reposting, related-job sections, or first discovery.
 
-**Validation:** installed plugin 4.26.2 live `search_jobs` and `get_job_details` worked during implementation. The application adapter's SDK handshake, tool discovery, calls and strict exclusions passed against a synthetic subprocess MCP server. End-to-end live adapter authentication is not claimed as validated. No live results or account data are bundled.
+**Validation:** installed plugin 4.26.2 live `search_jobs` and `get_job_details` worked during initial implementation. Subsequent end-to-end testing completed the application's actual live MCP handshake, but its search was blocked by an existing browser-profile lease held by another client. The official `close_session` tool also reported busy and left the saved session unchanged. Release or restart the owning server from its original chat, then retest search and one detail. No successful live adapter job read is claimed. Synthetic protocol tests still validate adapter calls, exclusions and safe actionable failures. No live results or account data are bundled.
 
 ## Privacy and isolation
 
@@ -92,7 +94,7 @@ Export filenames: `firstname.lastname.jobtitle.company.pdf`, `.docx`, and `.trac
 python -m unittest discover -s tests -v
 ```
 
-Tests cover consent, user isolation, persistence, edit/deletion, approval and statement trace, untrusted instruction text, upload limits/ZIP expansion, freshness boundaries/reposts/updates/unknown dates/inactive listings, SSRF, local authentication/host/origin checks, safe filenames, PDF/DOCX contents, real MCP handshake and client adapter calls against a synthetic server. No network account or cookies are needed for tests. PDF and DOCX samples were rendered and visually inspected.
+18 tests cover consent, user isolation, persistence, edit/deletion, approval and statement trace, untrusted instruction text, upload limits/ZIP expansion, freshness boundaries/reposts/updates/unknown dates/inactive listings, SSRF, local authentication/host/origin checks, safe filenames, PDF/DOCX contents, real MCP handshake and client adapter calls against a synthetic server. No network account or cookies are needed for tests. Browser tests also covered actual PDF and DOCX uploads, approved fact editing, refresh and server-restart persistence, memory export/deletion, strict fixture jobs, real public company evidence, possible teammate inference from an explicitly synthetic source, and real PDF/DOCX downloads. Downloaded bytes matched the server files and both exports were rendered and visually inspected.
 
 Official integration references:
 

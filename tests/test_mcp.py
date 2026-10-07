@@ -25,4 +25,22 @@ class MCPTests(unittest.TestCase):
     self.assertEqual(r['strict_results'],[]);self.assertEqual(len(r['excluded']),1)
     with self.assertRaises(ValueError):await LinkedIn().call('send_message',{})
   asyncio.run(check())
+
+class IntegrationFailureTests(unittest.TestCase):
+ def test_busy_error_through_real_adapter_is_actionable(self):
+  from career_assistant.sources import LinkedInError
+  async def check():
+   env=json.dumps({'CAREER_TEST_BUSY':'1'})
+   command=json.dumps([sys.executable,str(Path('tests/mock_linkedin.py').resolve())])
+   with patch.dict(os.environ,CAREER_LINKEDIN_COMMAND=command,CAREER_LINKEDIN_ENV=env):
+    with self.assertRaisesRegex(LinkedInError,'busy in another MCP client'):
+     await linkedin_jobs('synthetic')
+  asyncio.run(check())
+ def test_operator_environment_validation(self):
+  async def check():
+   with patch.dict(os.environ,CAREER_LINKEDIN_COMMAND='["unused"]',CAREER_LINKEDIN_ENV='["not-an-object"]'):
+    with self.assertRaises(ValueError):
+     async with LinkedIn().session():pass
+  asyncio.run(check())
+
 if __name__=='__main__':unittest.main()

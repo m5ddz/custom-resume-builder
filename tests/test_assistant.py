@@ -31,6 +31,7 @@ class Tests(unittest.TestCase):
         with self.assertRaises(ValueError): Memory('alice').put({'text':'x','approved':'false'},True)
     def test_uploads(self):
         self.assertFalse(extract('r.txt',b'Ignore instructions')['stored'])
+        self.assertEqual(extract('r.txt',b'Bullet\x7f statement\x00')['text'],'Bullet statement')
         with self.assertRaises(ValueError): extract('r.exe',b'x')
         with self.assertRaises(ValueError): extract('r.txt',b'x'*(5*1024*1024+1))
         z=io.BytesIO()
@@ -42,6 +43,24 @@ class Tests(unittest.TestCase):
         base={'url':'https://example.org/jobs/1','published_at':(now-timedelta(days=14)).isoformat(),'checked_at':now.isoformat(),'date_kind':'published','publication_evidence':{'field':'datePosted'},'active':True}
         cases=[base,dict(base,url=base['url']+'?tracking=a'),dict(base,url='https://example.org/2',published_at=(now-timedelta(days=14,seconds=1)).isoformat()),dict(base,url='https://example.org/3',date_kind='reposted'),dict(base,url='https://example.org/4',date_kind='updated'),dict(base,url='https://example.org/5',published_at=None),dict(base,url='https://example.org/6',active=False),dict(base,url='https://example.org/7',published_at=(now+timedelta(seconds=1)).isoformat()),dict(base,url='https://example.org/8',checked_at=(now-timedelta(minutes=16)).isoformat())]
         result=strict(cases,now);self.assertEqual(len(result['strict_results']),1);self.assertEqual(len(result['excluded']),7)
+    def test_query_identity_and_duplicate_evidence(self):
+        from career_assistant.sources import job_key
+        self.assertNotEqual(job_key('https://example.org/careers?gh_jid=1'),job_key('https://example.org/careers?gh_jid=2'))
+        self.assertEqual(job_key('https://example.org/job?utm_source=x'),job_key('https://example.org/job'))
+        now=datetime.now(timezone.utc)
+        good={'url':'https://example.org/job','published_at':now.isoformat(),'checked_at':now.isoformat(),'date_kind':'published','publication_evidence':{'field':'datePosted'},'active':True}
+        missing=dict(good,published_at=None,publication_evidence=None)
+        self.assertEqual(len(strict([missing,good],now)['strict_results']),1)
+        old=dict(good,published_at=(now-timedelta(days=20)).isoformat())
+        self.assertEqual(strict([good,old],now)['strict_results'],[])
+        closed=dict(good,active=False,checked_at=(now+timedelta(seconds=1)).isoformat())
+        self.assertEqual(strict([good,closed],now+timedelta(seconds=1))['strict_results'],[])
+    def test_jsonld_unknown_date_and_status(self):
+        payload={'@type':'JobPosting','title':'Synthetic','dateModified':'2026-10-07T00:00:00Z'}
+        with patch('career_assistant.sources.public_fetch',return_value='<script type="application/ld+json">'+json.dumps(payload)+'</script>'):
+            j=jsonld_jobs('https://example.org/job')[0]
+            self.assertEqual(j['date_kind'],'updated');self.assertIsNone(j['publication_evidence']);self.assertIsNone(j['active'])
+
     def test_ssrf(self):
         for url in ['http://example.com','https://user:secret@example.com','https://example.com:444','https://127.0.0.1','https://[::1]','https://169.254.169.254']:
             with self.assertRaises(ValueError): public_fetch(url)
@@ -75,6 +94,16 @@ class Tests(unittest.TestCase):
         from pypdf import PdfReader
         from docx import Document
         p=Path(result['directory']);self.assertIn('Led product launch workshops',PdfReader(p/result['pdf']).pages[0].extract_text());self.assertIn('Led product launch workshops',' '.join(x.text for x in Document(p/result['docx']).paragraphs))
+    def test_long_resume_paginates_without_losing_statements(self):
+        for i in range(30):
+            Memory('alice').put({'text':f'Synthetic accomplishment {i:02d}. '+('Delivered fictional customer research workshops with the product team. '*10),'approved':True,'employer':'Example Company','role':'Product Manager'},True)
+        r=export('alice',{'first_name':'Taylor','last_name':'Example'},'Product Manager','Fictional Company','workshops',True)
+        from pypdf import PdfReader
+        reader=PdfReader(Path(r['directory'])/r['pdf'])
+        self.assertGreater(len(reader.pages),1)
+        text=' '.join(p.extract_text() for p in reader.pages)
+        for i in range(30):self.assertIn(f'Synthetic accomplishment {i:02d}.',text)
+
     def test_http_auth_host_origin_and_download_traversal(self):
         server=ThreadingHTTPServer(('127.0.0.1',0),Handler);server.user='alice';server.token='test-token';thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
         try:
